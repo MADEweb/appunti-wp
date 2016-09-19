@@ -1,0 +1,111 @@
+/* ---------------------------------------------------------------------------
+ * per gestire conferma registrazione via mail di wp-members
+ * --------------------------------------------------------------------------- */
+function my_activation_key_settings() {
+    $settings = array(
+        'email_text'      => 'Click the next link to activate your account/Cliccate il seguente link per attivare il vostro account personale: ',
+        'return_url'      => 'http://www.iltuosito/paginaxyz',
+        'send_welcome'    => true,
+        'show_success'    => true,
+        'success_message' => 'Thank you for activating your account.</br>Grazie per aver attivato il vostro account personale.',
+        'send_notify'     => true,
+    );  
+    return $settings;
+}
+/**
+ * Create an activation key for the
+ * user at registration.
+ */
+add_action( 'wpmem_post_register_data', 'my_generate_key' );
+function my_generate_key( $fields ) {
+     
+    // Generate a random key.
+    $key = md5( wp_generate_password() );
+     
+    // Save this for the new user account.
+    add_user_meta( $fields['ID'], 'activation_key', $key );
+}
+/**
+ * Include the activation key in the new user
+ * registration email as an activation link.
+ */
+add_filter( 'wpmem_email_filter', 'my_add_key_to_email', 10, 3 );
+function my_add_key_to_email( $arr, $wpmem_fields, $field_data ) {
+     
+    $settings = my_activation_key_settings();
+    $url = trailingslashit( $settings['return_url'] );
+     
+    // Only do this for new registrations.
+    if ( $arr['toggle'] == 'newmod' ) {
+        // Get the stored key.
+        $key = get_user_meta( $arr['user_id'], 'activation_key', true );
+        // Add text and link to the email body.
+        $arr['body'] = $arr['body'] . "\r\n"
+            . $settings['email_text']
+            . add_query_arg( 'activate', $key, $url );
+    }
+     
+    return $arr;
+}
+/**
+ * Check for an activation key and if one exists,
+ * validate and log in user.
+ */
+add_action( 'template_redirect', 'my_validate_key' );
+function my_validate_key() {
+     
+    $settings = my_activation_key_settings();
+     
+    // Check for activation key.
+    if ( isset( $_GET['activate'] ) ) {
+         
+        // Get the user account the key is for.
+        $users = get_users( array(
+            'meta_key'    => 'activation_key',
+            'meta_value'  => $_GET['activate'],
+            'number'      => 1,
+            'count_total' => false
+        ) );
+         
+        if ( $users ) {
+            foreach( $users as $user ) {
+                 
+                // The provided activation key was valid, log in.
+                wp_set_auth_cookie( $user->ID, true );
+                wp_set_current_user( $user>ID );
+ 
+                // Delete activation_key meta and set active.
+                delete_user_meta( $user->ID, 'activation_key' );
+                update_user_meta( $user->ID, 'active', '1' );
+                 
+                if ( $settings['send_welcome'] ) {
+                    // Send a welcome email
+                    include_once( WPMEM_PATH . 'inc/email.php' );
+                    wpmem_inc_regemail( $user->ID, '', 2 );
+                }
+                 
+                if ( $settings['send_notify'] ) {
+                    // Send a welcome email
+                    global $wpmem;
+                    include_once( WPMEM_PATH . 'inc/email.php' );
+                    wpmem_notify_admin( $user->ID, $wpmem->fields );
+                }
+                break;
+            }
+        }
+    }
+}
+
+add_filter( 'the_content', 'my_show_thankyou_on_activation', 100 );
+function my_show_thankyou_on_activation( $content ) {
+     
+    $settings = my_activation_key_settings();
+     
+    if ( $settings['show_success'] && isset( $_GET['activate'] ) ) {
+        // Load dependencies.
+        include_once( WPMEM_PATH . 'inc/dialogs.php' );
+        $content = wpmem_inc_regmessage( '', $settings['success_message'] ) . $content;
+    }
+     
+    return $content;
+}
